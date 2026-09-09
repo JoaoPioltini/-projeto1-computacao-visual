@@ -1,5 +1,8 @@
 # Fontes
 
-Coloque aqui o arquivo `.ttf` escolhido para os textos da interface.
+Esta pasta contem a fonte usada pela interface SDL_ttf.
 
-O projeto deve carregar a fonte a partir desta pasta para funcionar em diferentes sistemas operacionais.
+- `Roboto-Regular.ttf`: fonte Roboto obtida do Google Fonts.
+- `OFL.txt`: licenca SIL Open Font License da fonte.
+
+O programa carrega a fonte por caminho relativo para nao depender de fontes instaladas no sistema operacional.
