@@ -1,30 +1,32 @@
 # Projeto 1 - Processamento de Imagens
 
-Projeto da disciplina de Computacao Visual para carregar uma imagem, converter para escala de cinza, analisar o histograma, equalizar a imagem e salvar o resultado.
+Projeto da disciplina de Computação Visual para carregar uma imagem, converter para escala de cinza, analisar o histograma, equalizar a imagem e salvar o resultado.
 
 ## Integrantes
 
 - Alexandre Eiji Tomimura Carvalho: 10371680
-- Joao Pedro Pioltini de Oliveira: 10425643
+- João Pedro Pioltini de Oliveira: 10425643
 - Matheus Veiga Bacetic Joaquim: 10425638
 
-## Contribuicoes
+## Contribuições
 
-As contribuicoes foram divididas igualmente entre os integrantes do grupo.
+As contribuições foram divididas igualmente entre os integrantes do grupo.
 
-- Alexandre Eiji Tomimura Carvalho: implementacao e revisao da conversao para escala de cinza, apoio na validacao do carregamento da imagem e revisao da documentacao.
-- Joao Pedro Pioltini de Oliveira: organizacao da base do projeto, ajustes de compilacao, integracao com SDL3/SDL_image/SDL_ttf e revisao dos testes de execucao.
-- Matheus Veiga Bacetic Joaquim: implementacao e revisao do histograma, equalizacao, calculos de media/desvio padrao e apoio na interface de controle.
+- Alexandre Eiji Tomimura Carvalho: implementação e revisão da conversão para escala de cinza, apoio na validação do carregamento da imagem e revisão da documentação.
+- João Pedro Pioltini de Oliveira: organização da base do projeto, ajustes de compilação, integração com SDL3/SDL_image/SDL_ttf e revisão dos testes de execução.
+- Matheus Veiga Bacetic Joaquim: revisão e melhoria da interface SDL, com ajustes nos controles da janela secundária, centralização dos textos dos botões e renderização da imagem com preservação da proporção ao alternar entre 1024x768 e resolução original.
 
 ## Funcionalidades
 
 - Carregamento de imagem por linha de comando.
-- Conversao para escala de cinza usando luminancia.
+- Conversão para escala de cinza usando luminância.
 - Histograma com 256 intensidades.
-- Media, desvio padrao e classificacoes de brilho/contraste.
-- Janela secundaria com SDL_ttf, histograma e botoes.
-- Botao `Equalizar` / `Ver original`.
-- Botao `Resolucao original` / `1024x768`.
+- Média, desvio padrão e classificações de brilho/contraste.
+- Janela secundária com SDL_ttf, histograma e botões.
+- Botão `Equalizar` / `Ver original`.
+- Botão `Resolução original` / `1024x768`.
+- Preservação da proporção da imagem durante o redimensionamento.
+- Centralização automática dos textos nos botões da interface.
 - Tecla `S` para salvar `output_image.png`.
 
 ## Bibliotecas
@@ -37,25 +39,25 @@ Fonte usada pela interface:
 
 - `assets/fonts/Roboto-Regular.ttf`
 
-## Ambiente Usado No Desenvolvimento
+## Ambiente Usado no Desenvolvimento
 
-- Sistema operacional: macOS Darwin 25.6.0 arm64
-- Compilador testado: Apple clang 21.0.0
-- SDL3: 3.4.16
-- SDL3_image: 3.4.6
-- SDL3_ttf: 3.2.2
+- Sistema operacional: macOS Darwin 25.6.0 arm64.
+- Compilador testado: Apple clang 21.0.0.
+- SDL3: 3.4.16.
+- SDL3_image: 3.4.6.
+- SDL3_ttf: 3.2.2.
 
-## Ambientes de Correcao Previstos
+## Ambientes de Correção Previstos
 
-O projeto foi escrito em linguagem C e o `makefile` usa `gcc` como compilador padrao.
+O projeto foi escrito em linguagem C e o `makefile` usa `gcc` como compilador padrão.
 
 - Windows 10/11 com GCC 15.1.0.
 - WSL Ubuntu 26.04 com GCC 15.2.0.
 
 No macOS e no WSL, o projeto usa `pkg-config` para obter os caminhos de include e linkagem.
-No Windows com MinGW, o `makefile` usa a variavel `SDL_DIR` para encontrar as bibliotecas da SDL.
+No Windows com MinGW, o `makefile` usa a variável `SDL_DIR` para encontrar as bibliotecas da SDL.
 
-## Dependencias
+## Dependências
 
 No macOS com Homebrew:
 
@@ -77,9 +79,9 @@ Se estiverem em outro local, informe o caminho ao compilar:
 mingw32-make SDL_DIR=c:/caminho/para/SDL3
 ```
 
-## Compilacao
+## Compilação
 
-Verificar dependencias:
+Verificar dependências:
 
 ```sh
 make check-deps
@@ -91,7 +93,7 @@ Compilar:
 make
 ```
 
-Caso precise informar explicitamente a versao do GCC:
+Caso precise informar explicitamente a versão do GCC:
 
 ```sh
 make CC=gcc-15
@@ -115,7 +117,7 @@ Limpar arquivos gerados:
 make clean
 ```
 
-## Execucao
+## Execução
 
 Rodar com a imagem de exemplo:
 
@@ -144,23 +146,23 @@ Rodar com outra imagem:
 ## Controles
 
 - `Equalizar`: equaliza o histograma da imagem atual em escala de cinza.
-- `Ver original`: restaura a copia original em escala de cinza sem recarregar do disco.
-- `Resolucao original`: mostra a janela principal no tamanho original da imagem.
-- `1024x768`: volta a janela principal ao tamanho padrao.
+- `Ver original`: restaura a cópia original em escala de cinza sem recarregar do disco.
+- `Resolução original`: mostra a janela principal no tamanho original da imagem.
+- `1024x768`: volta a janela principal ao tamanho padrão.
 - `S`: salva a imagem ativa em `output_image.png`.
 
 ## Estrutura
 
-- `src/main.c`: codigo-fonte principal.
+- `src/main.c`: código-fonte principal.
 - `assets/images/`: imagens de teste.
 - `assets/fonts/`: fonte usada pela interface SDL_ttf.
-- `makefile`: regras de compilacao, execucao e limpeza.
+- `makefile`: regras de compilação, execução e limpeza.
 
-## Observacoes
+## Observações
 
-Os thresholds de classificacao foram definidos no codigo como constantes para facilitar justificativa e ajuste no relatorio:
+Os thresholds de classificação foram definidos no código como constantes para facilitar a justificativa e o ajuste no relatório:
 
-- brilho escuro: media menor que 85
-- brilho claro: media maior que 170
-- contraste baixo: desvio padrao menor que 40
-- contraste alto: desvio padrao maior que 80
+- brilho escuro: média menor que 85.
+- brilho claro: média maior que 170.
+- contraste baixo: desvio padrão menor que 40.
+- contraste alto: desvio padrão maior que 80.

@@ -834,10 +834,17 @@ void update_main_window_size_and_position(void)
     SDL_Log("*** Erro ao obter resolucao do monitor: %s", SDL_GetError());
   }
 
-  g_image.rect.x = 0.0f;
-  g_image.rect.y = 0.0f;
-  g_image.rect.w = (float)target_width;
-  g_image.rect.h = (float)target_height;
+  float scale_x = (float)target_width / (float)g_image.surface->w;
+  float scale_y = (float)target_height / (float)g_image.surface->h;
+  float scale = scale_x < scale_y ? scale_x : scale_y;
+
+  float image_width = (float)g_image.surface->w * scale;
+  float image_height = (float)g_image.surface->h * scale;
+
+  g_image.rect.x = ((float)target_width - image_width) / 2.0f;
+  g_image.rect.y = ((float)target_height - image_height) / 2.0f;
+  g_image.rect.w = image_width;
+  g_image.rect.h = image_height;
 
   g_resolutionButton.text = g_showOriginalResolution ? "1024x768" : "Resolucao original";
   SDL_SyncWindow(g_window.window);
@@ -899,7 +906,17 @@ void render_button(SDL_Renderer *renderer, Button *button)
   SDL_RenderRect(renderer, &button->rect);
 
   SDL_Color white = { 255, 255, 255, 255 };
-  render_text(renderer, button->text, button->rect.x + 16.0f, button->rect.y + 11.0f, white);
+
+  int text_width = 0;
+  int text_height = 0;
+
+  if (TTF_GetStringSize(g_font, button->text, strlen(button->text), &text_width, &text_height))
+  {
+    float text_x = button->rect.x + (button->rect.w - (float)text_width) / 2.0f;
+    float text_y = button->rect.y + (button->rect.h - (float)text_height) / 2.0f;
+
+    render_text(renderer, button->text, text_x, text_y, white);
+  }
 }
 
 //------------------------------------------------------------------------------
