@@ -2,55 +2,50 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
-// Exemplo: 05-filter_image
-// O programa carrega o arquivo de imagem indicado na constante IMAGE_FILENAME
-// e exibe o conteúdo na janela ("kodim23.png" pertence ao "Kodak Image Set").
-//
-// Caso a imagem seja maior do que WINDOW_WIDTHxWINDOW_HEIGHT, a janela é
-// redimensionada logo após a imagem ser carregada.
-//
-// As teclas '0' e 'R' restauram a imagem original e a exibe na janela.
-// As teclas '1' a '9' aplicam um filtro de média na imagem original e exibem
-// a imagem filtrada na janela (cada tecla corresponde a um tamanho diferente
-// do filtro - veja o código da função loop()).
-//
-// Observações:
-// O código não está focado em performance e filtros grandes (ex. 29x29) levam
-// um certo tempo para processar toda a imagem. Para indicar que o programa
-// ainda está filtrando a imagem, o cursor do mouse é alterado para um
-// SDL_SYSTEM_CURSOR_WAIT e volta para o padrão após a filtragem ser concluída.
-//
-// Em um projeto mais realista, o código abaixo provavelmente seria refatorado.
-// Alguns exemplos de refatoração do projeto:
-// - Uso de headers (.h) e outros arquivos .c (ex. estruturas e operações
-//   relacionadas à imagens);
-// - Remoção de variáveis globais;
-// - Redução de logs (ou melhor, seriam desativados na build release);
-// - Arquivo de imagem seria um parâmetro do programa (argv), ao invés de ser
-//   uma string constante IMAGE_FILENAME.
-//------------------------------------------------------------------------------
+// Projeto 1 - Processamento de imagens
+// Baseado no exemplo fornecido pelo Prof. Andre Kishimoto.
+// Integrantes:
+// - Alexandre Eiji Tomimura Carvalho
+// - Joao Pedro Pioltini de Oliveira
+// - Matheus Veiga Bacetic Joaquim
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
 // Includes
 //------------------------------------------------------------------------------
+#include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
+#include <string.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
+#include <SDL3_ttf/SDL_ttf.h>
 
 //------------------------------------------------------------------------------
 // Custom types, structs, constants, etc.
 //------------------------------------------------------------------------------
-static const char *WINDOW_TITLE = "Filter image";
+static const char *WINDOW_TITLE = "Projeto 1 - Imagem";
+static const char *SECONDARY_WINDOW_TITLE = "Histograma";
+static const char *FONT_FILENAME = "assets/fonts/Roboto-Regular.ttf";
+static const char *OUTPUT_FILENAME = "output_image.png";
 
 enum constants
 {
-  DEFAULT_WINDOW_WIDTH = 640,
-  DEFAULT_WINDOW_HEIGHT = 480,
+  DEFAULT_WINDOW_WIDTH = 1024,
+  DEFAULT_WINDOW_HEIGHT = 768,
+  SECONDARY_WINDOW_WIDTH = 500,
+  SECONDARY_WINDOW_HEIGHT = 400,
+  HISTOGRAM_SIZE = 256,
+  FONT_SIZE = 16,
 };
+
+// Limiares definidos pelo grupo para classificacao de luminosidade e contraste.
+static const double BRIGHTNESS_DARK_THRESHOLD = 85.0;
+static const double BRIGHTNESS_LIGHT_THRESHOLD = 170.0;
+static const double CONTRAST_LOW_THRESHOLD = 40.0;
+static const double CONTRAST_HIGH_THRESHOLD = 80.0;
 
 typedef struct MyWindow MyWindow;
 struct MyWindow
@@ -67,20 +62,59 @@ struct MyImage
   SDL_FRect rect;
 };
 
+typedef struct ImageStats ImageStats;
+struct ImageStats
+{
+  Uint32 histogram[HISTOGRAM_SIZE];
+  Uint64 total_pixels;
+  double mean;
+  double stddev;
+};
+
+typedef struct Button Button;
+struct Button
+{
+  SDL_FRect rect;
+  const char *text;
+  bool hovered;
+  bool pressed;
+};
+
 //------------------------------------------------------------------------------
 // Globals (argh!)
 //------------------------------------------------------------------------------
 static MyWindow g_window = { .window = NULL, .renderer = NULL };
+static MyWindow g_secondaryWindow = {
+  .window = NULL,
+  .renderer = NULL
+};
+
 static MyImage g_image = {
   .surface = NULL,
   .texture = NULL,
   .rect = { .x = 0.0f, .y = 0.0f, .w = 0.0f, .h = 0.0f }
 };
 
-static SDL_Surface *surfaceFilter = NULL;
+static SDL_Surface *g_originalGraySurface = NULL;
+static TTF_Font *g_font = NULL;
+static ImageStats g_stats = { 0 };
 
-static SDL_Cursor *defaultMouseCursor = NULL;
-static SDL_Cursor *hourglassMouseCursor = NULL;
+static Button g_equalizeButton = {
+  .rect = { .x = 40.0f, .y = 292.0f, .w = 190.0f, .h = 42.0f },
+  .text = "Equalizar",
+  .hovered = false,
+  .pressed = false
+};
+
+static Button g_resolutionButton = {
+  .rect = { .x = 260.0f, .y = 292.0f, .w = 200.0f, .h = 42.0f },
+  .text = "Resolucao original",
+  .hovered = false,
+  .pressed = false
+};
+
+static bool g_isEqualized = false;
+static bool g_showOriginalResolution = false;
 
 //------------------------------------------------------------------------------
 // Function declaration
@@ -92,6 +126,9 @@ static bool MyImage_update_texture_with_surface(MyImage* image, SDL_Renderer *re
 static bool MyImage_restore_texture(MyImage* image, SDL_Renderer *renderer);
 static bool MyImage_is_grayscale(MyImage *image);
 static bool MyImage_convert_to_grayscale(MyImage *image);
+static bool MyImage_copy_surface_to_active(MyImage *image, SDL_Renderer *renderer, SDL_Surface *source);
+static bool MyImage_calculate_histogram(MyImage *image, Uint32 histogram[HISTOGRAM_SIZE], Uint64 *total_pixels);
+static bool MyImage_equalize(MyImage *image, SDL_Renderer *renderer);
 
 /**
  * Carrega a imagem indicada no parâmetro `filename` e a converte para o formato
@@ -100,18 +137,27 @@ static bool MyImage_convert_to_grayscale(MyImage *image);
  * Caso ocorra algum erro no processo, a função retorna false.
  */
 static bool load_rgba32(const char *filename, SDL_Renderer *renderer, MyImage *output_image);
-
-/**
- * Aplica um filtro de média na imagem original, salva o resultado na variável
- * global surfaceFilter e atualiza o conteúdo da janela.
- */
-static bool MyImage_blur(MyImage* image, SDL_Renderer *renderer, Uint32 filter_size);
-
-static void reset_image(void);
+static bool copy_original_grayscale(MyImage *image);
+static void calculate_histogram_analysis(ImageStats *stats);
+static const char *classify_brightness(double mean);
+static const char *classify_contrast(double stddev);
+static bool update_image_stats(void);
+static bool restore_original_grayscale(void);
+static bool save_current_image(void);
 
 static SDL_AppResult initialize(void);
 static void shutdown(void);
+static void update_main_window_size_and_position(void);
+static void render_text(SDL_Renderer *renderer, const char *text, float x, float y, SDL_Color color);
+static void render_button(SDL_Renderer *renderer, Button *button);
+static void render_histogram(SDL_Renderer *renderer, const SDL_FRect *rect, const Uint32 histogram[HISTOGRAM_SIZE]);
+static void render_main_window(void);
+static void render_secondary_window(void);
 static void render(void);
+static bool Button_contains(Button *button, float x, float y);
+static bool Button_handle_event(Button *button, const SDL_Event *event);
+static void toggle_equalization(void);
+static void toggle_resolution(void);
 static void loop(void);
 
 //------------------------------------------------------------------------------
@@ -190,7 +236,7 @@ void MyImage_destroy(MyImage *image)
 }
 
 //------------------------------------------------------------------------------
-// 
+//
 //------------------------------------------------------------------------------
 bool MyImage_update_texture_with_surface(MyImage* image, SDL_Renderer *renderer, SDL_Surface *surface)
 {
@@ -315,155 +361,7 @@ bool load_rgba32(const char *filename, SDL_Renderer *renderer, MyImage *output_i
 //------------------------------------------------------------------------------
 //
 //------------------------------------------------------------------------------
-bool MyImage_blur(MyImage* image, SDL_Renderer *renderer, Uint32 filter_size)
-{
-  SDL_Log(">>> MyImage_blur(filter_size: %u)", filter_size);
-
-  if (!image || !image->surface)
-  {
-    SDL_Log("\t*** Erro: Imagem inválida (image == NULL ou image->surface == NULL).");
-    SDL_Log("<<< MyImage_blur(filter_size: %u)", filter_size);
-    return false;
-  }
-
-  if (!renderer)
-  {
-    SDL_Log("\t*** Erro: Renderer inválido (renderer == NULL).");
-    SDL_Log("<<< MyImage_blur(filter_size: %u)", filter_size);
-    return false;
-  }
-
-  if (!surfaceFilter)
-  {
-    surfaceFilter = SDL_CreateSurface(g_image.surface->w, g_image.surface->h, g_image.surface->format);
-    if (!surfaceFilter)
-    {
-      SDL_Log("*** Erro: Superfície extra (filter) inválida!");
-      SDL_Log("<<< MyImage_blur(filter_size: %u)", filter_size);
-      return false;
-    }
-  }
-
-  SDL_Log("\tExecutando blur com filter_size: %u...", filter_size);
-  SDL_SetCursor(hourglassMouseCursor);
-
-  SDL_LockSurface(image->surface);
-  SDL_LockSurface(surfaceFilter);
-
-  const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
-  Uint32 *pixels = (Uint32 *)image->surface->pixels;
-  Uint32 *output = (Uint32 *)surfaceFilter->pixels;
-  
-  const int filterFinalSize = filter_size * filter_size;
-  const int filterHalfSize = filter_size >> 1;
-  const float average = 1.0f / filterFinalSize;
-
-  SDL_Color filter[filterFinalSize] = { };
-  SDL_Color filteredPixel = { .r = 0, .g = 0, .b = 0, .a = 255 };
-  Uint32 r = 0;
-  Uint32 g = 0;
-  Uint32 b = 0;
-  Uint32 filterIndex = 0;
-  
-  for (int row = 0; row < image->surface->h; ++row)
-  {
-    for (int col = 0; col < image->surface->w; ++col)
-    {
-      // Obtém as intensidades de cada pixel que "batem" com o filtro.
-      filterIndex = 0;
-      for (int rowNeighbour = -filterHalfSize; rowNeighbour <= filterHalfSize; ++rowNeighbour)
-      {
-        for (int colNeighbour = -filterHalfSize; colNeighbour <= filterHalfSize; ++colNeighbour)
-        {
-          // Casos em que parte do filtro está fora da imagem. Neste exemplo,
-          // apenas zeramos a intensidade das posições fora da imagem.
-          if ((row + rowNeighbour < 0) || (row + rowNeighbour >= image->surface->h)
-            || (col + colNeighbour < 0) || (col + colNeighbour >= image->surface->w))
-          {
-            filter[filterIndex].r = filter[filterIndex].g = filter[filterIndex].b = 0;
-          }
-          else
-          {
-            SDL_GetRGB(pixels[((row + rowNeighbour) * image->surface->w + (col + colNeighbour))], format, NULL,
-              &filter[filterIndex].r, &filter[filterIndex].g, &filter[filterIndex].b);
-          }
-          ++filterIndex;
-        }
-      }
-    
-      // Calcula a média dos pixels usados na filtragem e salva na saída.
-      r = g = b = 0;
-      for (int i = 0; i < filterFinalSize; ++i)
-      {
-        r += filter[i].r;
-        g += filter[i].g;
-        b += filter[i].b;
-      }
-      filteredPixel.r = (Uint8)(r * average);
-      filteredPixel.g = (Uint8)(g * average);
-      filteredPixel.b = (Uint8)(b * average);
-
-      output[row * image->surface->w + col] = SDL_MapRGB(format, NULL, filteredPixel.r, filteredPixel.g, filteredPixel.b);
-    }
-  }  
-
-  SDL_UnlockSurface(surfaceFilter);
-  SDL_UnlockSurface(image->surface);
-
-  MyImage_update_texture_with_surface(image, renderer, surfaceFilter);
-  render();
-
-  SDL_Log("\tBlur com filter_size: %u finalizado...", filter_size);
-  SDL_SetCursor(defaultMouseCursor);
-
-  SDL_Log("<<< MyImage_blur(filter_size: %u)", filter_size);
-  return true;
-}
-
-//------------------------------------------------------------------------------
-// 
-//------------------------------------------------------------------------------
-bool MyImage_is_grayscale(MyImage *image){
-  if (!image || !image -> surface){
-    SDL_Log("Erro: imagem inválida");
-    return false;
-  }
-
-   const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
-   Uint32 *pixels = (Uint32 *)image->surface->pixels;
-
-    Uint8 r = 0;
-    Uint8 g = 0;
-    Uint8 b = 0;
-
-    SDL_LockSurface(image->surface);
-
-    for (int row = 0; row < image->surface->h; ++row){
-      for (int col = 0; col < image->surface->w; ++col){
-        int index = row * image->surface->w + col;
-
-         SDL_GetRGB(
-          pixels[index],
-          format,
-          NULL,
-          &r,
-          &g,
-          &b
-        );
-
-        if (r != g || g != b){
-          SDL_UnlockSurface(image->surface);
-          return false;
-        }
-      }
-  }
-  SDL_UnlockSurface(image->surface);
-  return true;
-}
-//------------------------------------------------------------------------------
-// 
-//------------------------------------------------------------------------------
-bool MyImage_convert_to_grayscale(MyImage *image)
+bool MyImage_is_grayscale(MyImage *image)
 {
   if (!image || !image->surface)
   {
@@ -471,9 +369,7 @@ bool MyImage_convert_to_grayscale(MyImage *image)
     return false;
   }
 
-  const SDL_PixelFormatDetails *format =
-    SDL_GetPixelFormatDetails(image->surface->format);
-
+  const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
   Uint32 *pixels = (Uint32 *)image->surface->pixels;
 
   Uint8 r = 0;
@@ -488,47 +384,322 @@ bool MyImage_convert_to_grayscale(MyImage *image)
     {
       int index = row * image->surface->w + col;
 
-      SDL_GetRGB(
-        pixels[index],
-        format,
-        NULL,
-        &r,
-        &g,
-        &b
-      );
-
-      Uint8 y = (Uint8)(
-        0.2125f * r +
-        0.7154f * g +
-        0.0721f * b
-      );
-
-      pixels[index] = SDL_MapRGB(
-        format,
-        NULL,
-        y,
-        y,
-        y
-      );
+      SDL_GetRGB(pixels[index], format, NULL, &r, &g, &b);
+      if (r != g || g != b)
+      {
+        SDL_UnlockSurface(image->surface);
+        return false;
+      }
     }
   }
 
   SDL_UnlockSurface(image->surface);
+  return true;
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+bool MyImage_convert_to_grayscale(MyImage *image)
+{
+  if (!image || !image->surface)
+  {
+    SDL_Log("*** Erro: Imagem inválida.");
+    return false;
+  }
+
+  const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
+  Uint32 *pixels = (Uint32 *)image->surface->pixels;
+
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+
+  SDL_LockSurface(image->surface);
+
+  for (int row = 0; row < image->surface->h; ++row)
+  {
+    for (int col = 0; col < image->surface->w; ++col)
+    {
+      int index = row * image->surface->w + col;
+
+      SDL_GetRGB(pixels[index], format, NULL, &r, &g, &b);
+
+      Uint8 y = (Uint8)(0.2125f * r + 0.7154f * g + 0.0721f * b);
+      pixels[index] = SDL_MapRGB(format, NULL, y, y, y);
+    }
+  }
+
+  SDL_UnlockSurface(image->surface);
+  return true;
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+bool copy_original_grayscale(MyImage *image)
+{
+  if (!image || !image->surface)
+  {
+    SDL_Log("*** Erro: Imagem invalida para copia.");
+    return false;
+  }
+
+  SDL_DestroySurface(g_originalGraySurface);
+  g_originalGraySurface = SDL_DuplicateSurface(image->surface);
+  if (!g_originalGraySurface)
+  {
+    SDL_Log("*** Erro ao copiar superficie original em cinza: %s", SDL_GetError());
+    return false;
+  }
 
   return true;
 }
 
 //------------------------------------------------------------------------------
-// 
+//
 //------------------------------------------------------------------------------
-void reset_image(void)
+bool MyImage_copy_surface_to_active(MyImage *image, SDL_Renderer *renderer, SDL_Surface *source)
 {
-  SDL_Log(">>> reset_image()");
+  if (!image || !renderer || !source)
+  {
+    SDL_Log("*** Erro: Parametros invalidos para copiar superficie ativa.");
+    return false;
+  }
 
-  MyImage_restore_texture(&g_image, g_window.renderer);
-  render();
+  SDL_Surface *copy = SDL_DuplicateSurface(source);
+  if (!copy)
+  {
+    SDL_Log("*** Erro ao duplicar superficie: %s", SDL_GetError());
+    return false;
+  }
 
-  SDL_Log("<<< reset_image()");
+  SDL_DestroySurface(image->surface);
+  image->surface = copy;
+
+  return MyImage_update_texture_with_surface(image, renderer, image->surface);
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+bool MyImage_calculate_histogram(MyImage *image, Uint32 histogram[HISTOGRAM_SIZE], Uint64 *total_pixels)
+{
+  if (!image || !image->surface || !histogram || !total_pixels)
+  {
+    SDL_Log("*** Erro: Parametros invalidos para calculo do histograma.");
+    return false;
+  }
+
+  memset(histogram, 0, sizeof(Uint32) * HISTOGRAM_SIZE);
+  *total_pixels = (Uint64)image->surface->w * (Uint64)image->surface->h;
+
+  const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
+  Uint32 *pixels = (Uint32 *)image->surface->pixels;
+
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+
+  SDL_LockSurface(image->surface);
+
+  for (int row = 0; row < image->surface->h; ++row)
+  {
+    for (int col = 0; col < image->surface->w; ++col)
+    {
+      int index = row * image->surface->w + col;
+
+      SDL_GetRGB(pixels[index], format, NULL, &r, &g, &b);
+      histogram[r]++;
+    }
+  }
+
+  SDL_UnlockSurface(image->surface);
+  return true;
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+void calculate_histogram_analysis(ImageStats *stats)
+{
+  if (!stats || stats->total_pixels == 0)
+    return;
+
+  double sum = 0.0;
+  for (int i = 0; i < HISTOGRAM_SIZE; ++i)
+    sum += (double)i * (double)stats->histogram[i];
+
+  stats->mean = sum / (double)stats->total_pixels;
+
+  double variance_sum = 0.0;
+  for (int i = 0; i < HISTOGRAM_SIZE; ++i)
+  {
+    double difference = (double)i - stats->mean;
+    variance_sum += (double)stats->histogram[i] * difference * difference;
+  }
+
+  stats->stddev = sqrt(variance_sum / (double)stats->total_pixels);
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+const char *classify_brightness(double mean)
+{
+  if (mean < BRIGHTNESS_DARK_THRESHOLD)
+    return "escura";
+
+  if (mean > BRIGHTNESS_LIGHT_THRESHOLD)
+    return "clara";
+
+  return "media";
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+const char *classify_contrast(double stddev)
+{
+  if (stddev < CONTRAST_LOW_THRESHOLD)
+    return "baixo";
+
+  if (stddev > CONTRAST_HIGH_THRESHOLD)
+    return "alto";
+
+  return "medio";
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+bool update_image_stats(void)
+{
+  if (!MyImage_calculate_histogram(&g_image, g_stats.histogram, &g_stats.total_pixels))
+    return false;
+
+  calculate_histogram_analysis(&g_stats);
+  return true;
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+bool MyImage_equalize(MyImage *image, SDL_Renderer *renderer)
+{
+  if (!image || !image->surface || !renderer)
+  {
+    SDL_Log("*** Erro: Parametros invalidos para equalizacao.");
+    return false;
+  }
+
+  Uint32 histogram[HISTOGRAM_SIZE] = { 0 };
+  Uint64 total_pixels = 0;
+  if (!MyImage_calculate_histogram(image, histogram, &total_pixels) || total_pixels == 0)
+    return false;
+
+  Uint64 cdf[HISTOGRAM_SIZE] = { 0 };
+  cdf[0] = histogram[0];
+  for (int i = 1; i < HISTOGRAM_SIZE; ++i)
+    cdf[i] = cdf[i - 1] + histogram[i];
+
+  // Primeiro valor acumulado nao-zero; evita mapear intensidades ausentes.
+  Uint64 cdf_min = 0;
+  for (int i = 0; i < HISTOGRAM_SIZE; ++i)
+  {
+    if (histogram[i] > 0)
+    {
+      cdf_min = cdf[i];
+      break;
+    }
+  }
+
+  if (cdf_min == total_pixels)
+  {
+    SDL_Log("Equalizacao ignorada: imagem possui uma unica intensidade.");
+    return true;
+  }
+
+  Uint8 transform[HISTOGRAM_SIZE] = { 0 };
+  double denominator = (double)(total_pixels - cdf_min);
+  for (int i = 0; i < HISTOGRAM_SIZE; ++i)
+  {
+    double value = ((double)(cdf[i] - cdf_min) / denominator) * 255.0;
+    if (value < 0.0)
+      value = 0.0;
+    if (value > 255.0)
+      value = 255.0;
+    transform[i] = (Uint8)(value + 0.5);
+  }
+
+  const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
+  Uint32 *pixels = (Uint32 *)image->surface->pixels;
+
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+
+  SDL_LockSurface(image->surface);
+
+  for (int row = 0; row < image->surface->h; ++row)
+  {
+    for (int col = 0; col < image->surface->w; ++col)
+    {
+      int index = row * image->surface->w + col;
+
+      SDL_GetRGB(pixels[index], format, NULL, &r, &g, &b);
+      Uint8 y = transform[r];
+      pixels[index] = SDL_MapRGB(format, NULL, y, y, y);
+    }
+  }
+
+  SDL_UnlockSurface(image->surface);
+  return MyImage_update_texture_with_surface(image, renderer, image->surface);
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+bool restore_original_grayscale(void)
+{
+  if (!g_originalGraySurface)
+  {
+    SDL_Log("*** Erro: copia original em cinza nao existe.");
+    return false;
+  }
+
+  if (!MyImage_copy_surface_to_active(&g_image, g_window.renderer, g_originalGraySurface))
+    return false;
+
+  g_isEqualized = false;
+  g_equalizeButton.text = "Equalizar";
+  return update_image_stats();
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+bool save_current_image(void)
+{
+  if (!g_image.surface)
+  {
+    SDL_Log("*** Erro: Nao ha imagem ativa para salvar.");
+    return false;
+  }
+
+  FILE *file = fopen(OUTPUT_FILENAME, "rb");
+  bool existed = file != NULL;
+  if (file)
+    fclose(file);
+
+  if (!IMG_SavePNG(g_image.surface, OUTPUT_FILENAME))
+  {
+    SDL_Log("*** Erro ao salvar PNG: %s", SDL_GetError());
+    return false;
+  }
+
+  SDL_Log("%s: %s", existed ? "Arquivo sobrescrito" : "Arquivo criado", OUTPUT_FILENAME);
+  return true;
 }
 
 //------------------------------------------------------------------------------
@@ -546,10 +717,49 @@ SDL_AppResult initialize(void)
     return SDL_APP_FAILURE;
   }
 
+  SDL_Log("\tIniciando SDL_ttf...");
+  if (!TTF_Init())
+  {
+    SDL_Log("\t*** Erro ao iniciar SDL_ttf: %s", SDL_GetError());
+    SDL_Log("<<< initialize()");
+    return SDL_APP_FAILURE;
+  }
+
+  SDL_Log("\tCarregando fonte...");
+  g_font = TTF_OpenFont(FONT_FILENAME, FONT_SIZE);
+  if (!g_font)
+  {
+    SDL_Log("\t*** Erro ao carregar fonte \"%s\": %s", FONT_FILENAME, SDL_GetError());
+    SDL_Log("<<< initialize()");
+    return SDL_APP_FAILURE;
+  }
+
   SDL_Log("\tCriando janela e renderizador...");
   if (!MyWindow_initialize(&g_window, WINDOW_TITLE, DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT, 0))
   {
     SDL_Log("\t*** Erro ao criar a janela e/ou renderizador: %s", SDL_GetError());
+    SDL_Log("<<< initialize()");
+    return SDL_APP_FAILURE;
+  }
+
+  SDL_Log("\tCriando janela secundaria...");
+  if (!MyWindow_initialize(&g_secondaryWindow, SECONDARY_WINDOW_TITLE, SECONDARY_WINDOW_WIDTH, SECONDARY_WINDOW_HEIGHT, 0))
+  {
+    SDL_Log("\t*** Erro ao criar janela secundaria: %s", SDL_GetError());
+    SDL_Log("<<< initialize()");
+    return SDL_APP_FAILURE;
+  }
+
+  if (!SDL_SetWindowParent(g_secondaryWindow.window, g_window.window))
+  {
+    SDL_Log("\t*** Erro ao definir janela pai: %s", SDL_GetError());
+    SDL_Log("<<< initialize()");
+    return SDL_APP_FAILURE;
+  }
+
+  if (!SDL_SetWindowPosition(g_secondaryWindow.window, 0, 0))
+  {
+    SDL_Log("\t*** Erro ao posicionar janela secundaria: %s", SDL_GetError());
     SDL_Log("<<< initialize()");
     return SDL_APP_FAILURE;
   }
@@ -565,18 +775,21 @@ void shutdown(void)
 {
   SDL_Log(">>> shutdown()");
 
-  SDL_Log("Destruindo cursores do mouse...");
-  SDL_DestroyCursor(hourglassMouseCursor);
-  SDL_DestroyCursor(defaultMouseCursor);
-  defaultMouseCursor = NULL;
-  hourglassMouseCursor = NULL;
-
-  SDL_Log("Destruindo superfície extra (filter)...");
-  SDL_DestroySurface(surfaceFilter);
-  surfaceFilter = NULL;
+  SDL_Log("Destruindo copia original em cinza...");
+  SDL_DestroySurface(g_originalGraySurface);
+  g_originalGraySurface = NULL;
 
   MyImage_destroy(&g_image);
+
+  SDL_Log("Destruindo fonte...");
+  TTF_CloseFont(g_font);
+  g_font = NULL;
+
+  MyWindow_destroy(&g_secondaryWindow);
   MyWindow_destroy(&g_window);
+
+  SDL_Log("\tEncerrando SDL_ttf...");
+  TTF_Quit();
 
   SDL_Log("\tEncerrando SDL...");
   SDL_Quit();
@@ -587,14 +800,288 @@ void shutdown(void)
 //------------------------------------------------------------------------------
 //
 //------------------------------------------------------------------------------
-void render(void)
+void update_main_window_size_and_position(void)
 {
+  if (!g_window.window || !g_image.surface)
+    return;
+
+  int target_width = DEFAULT_WINDOW_WIDTH;
+  int target_height = DEFAULT_WINDOW_HEIGHT;
+
+  if (g_showOriginalResolution)
+  {
+    target_width = g_image.surface->w;
+    target_height = g_image.surface->h;
+  }
+
+  SDL_SetWindowSize(g_window.window, target_width, target_height);
+
+  SDL_Rect display_bounds = { 0, 0, 0, 0 };
+  SDL_DisplayID display = SDL_GetPrimaryDisplay();
+  if (display && SDL_GetDisplayUsableBounds(display, &display_bounds))
+  {
+    if (target_width <= display_bounds.w && target_height <= display_bounds.h)
+    {
+      SDL_SetWindowPosition(g_window.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    }
+    else
+    {
+      SDL_SetWindowPosition(g_window.window, display_bounds.x, display_bounds.y);
+    }
+  }
+  else
+  {
+    SDL_Log("*** Erro ao obter resolucao do monitor: %s", SDL_GetError());
+  }
+
+  g_image.rect.x = 0.0f;
+  g_image.rect.y = 0.0f;
+  g_image.rect.w = (float)target_width;
+  g_image.rect.h = (float)target_height;
+
+  g_resolutionButton.text = g_showOriginalResolution ? "1024x768" : "Resolucao original";
+  SDL_SyncWindow(g_window.window);
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+void render_text(SDL_Renderer *renderer, const char *text, float x, float y, SDL_Color color)
+{
+  if (!renderer || !g_font || !text)
+    return;
+
+  SDL_Surface *surface = TTF_RenderText_Blended(g_font, text, strlen(text), color);
+  if (!surface)
+  {
+    SDL_Log("*** Erro ao renderizar texto: %s", SDL_GetError());
+    return;
+  }
+
+  SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
+  if (!texture)
+  {
+    SDL_Log("*** Erro ao criar textura de texto: %s", SDL_GetError());
+    SDL_DestroySurface(surface);
+    return;
+  }
+
+  SDL_FRect dst = {
+    .x = x,
+    .y = y,
+    .w = (float)surface->w,
+    .h = (float)surface->h
+  };
+
+  SDL_RenderTexture(renderer, texture, NULL, &dst);
+  SDL_DestroyTexture(texture);
+  SDL_DestroySurface(surface);
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+void render_button(SDL_Renderer *renderer, Button *button)
+{
+  if (!renderer || !button)
+    return;
+
+  if (button->pressed)
+    SDL_SetRenderDrawColor(renderer, 20, 74, 150, 255);
+  else if (button->hovered)
+    SDL_SetRenderDrawColor(renderer, 75, 145, 235, 255);
+  else
+    SDL_SetRenderDrawColor(renderer, 33, 113, 205, 255);
+
+  SDL_RenderFillRect(renderer, &button->rect);
+
+  SDL_SetRenderDrawColor(renderer, 16, 52, 105, 255);
+  SDL_RenderRect(renderer, &button->rect);
+
+  SDL_Color white = { 255, 255, 255, 255 };
+  render_text(renderer, button->text, button->rect.x + 16.0f, button->rect.y + 11.0f, white);
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+void render_histogram(SDL_Renderer *renderer, const SDL_FRect *rect, const Uint32 histogram[HISTOGRAM_SIZE])
+{
+  if (!renderer || !rect || !histogram)
+    return;
+
+  Uint32 max_value = 0;
+  for (int i = 0; i < HISTOGRAM_SIZE; ++i)
+  {
+    if (histogram[i] > max_value)
+      max_value = histogram[i];
+  }
+
+  SDL_SetRenderDrawColor(renderer, 245, 247, 250, 255);
+  SDL_RenderFillRect(renderer, rect);
+  SDL_SetRenderDrawColor(renderer, 90, 96, 110, 255);
+  SDL_RenderRect(renderer, rect);
+
+  if (max_value == 0)
+    return;
+
+  SDL_SetRenderDrawColor(renderer, 42, 82, 150, 255);
+  float bar_width = rect->w / (float)HISTOGRAM_SIZE;
+
+  for (int i = 0; i < HISTOGRAM_SIZE; ++i)
+  {
+    float normalized = (float)histogram[i] / (float)max_value;
+    float bar_height = normalized * rect->h;
+    SDL_FRect bar = {
+      .x = rect->x + (float)i * bar_width,
+      .y = rect->y + rect->h - bar_height,
+      .w = bar_width < 1.0f ? 1.0f : bar_width,
+      .h = bar_height
+    };
+    SDL_RenderFillRect(renderer, &bar);
+  }
+
+  SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
+  SDL_RenderLine(renderer, rect->x, rect->y + rect->h, rect->x + rect->w, rect->y + rect->h);
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+void render_main_window(void)
+{
+  if (!g_window.renderer)
+    return;
+
   SDL_SetRenderDrawColor(g_window.renderer, 128, 128, 128, 255);
   SDL_RenderClear(g_window.renderer);
 
-  SDL_RenderTexture(g_window.renderer, g_image.texture, &g_image.rect, &g_image.rect);
+  if (g_image.texture)
+    SDL_RenderTexture(g_window.renderer, g_image.texture, NULL, &g_image.rect);
 
   SDL_RenderPresent(g_window.renderer);
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+void render_secondary_window(void)
+{
+  if (!g_secondaryWindow.renderer)
+    return;
+
+  SDL_SetRenderDrawColor(g_secondaryWindow.renderer, 232, 235, 240, 255);
+  SDL_RenderClear(g_secondaryWindow.renderer);
+
+  SDL_Color text_color = { 28, 32, 38, 255 };
+  SDL_Color muted_color = { 70, 76, 88, 255 };
+
+  render_text(g_secondaryWindow.renderer, "Histograma da imagem", 24.0f, 18.0f, text_color);
+
+  SDL_FRect histogram_rect = { .x = 24.0f, .y = 50.0f, .w = 452.0f, .h = 150.0f };
+  render_histogram(g_secondaryWindow.renderer, &histogram_rect, g_stats.histogram);
+  render_text(g_secondaryWindow.renderer, "0", 24.0f, 205.0f, muted_color);
+  render_text(g_secondaryWindow.renderer, "255", 446.0f, 205.0f, muted_color);
+
+  char line[128];
+  snprintf(line, sizeof(line), "Media: %.2f (%s)", g_stats.mean, classify_brightness(g_stats.mean));
+  render_text(g_secondaryWindow.renderer, line, 24.0f, 232.0f, text_color);
+
+  snprintf(line, sizeof(line), "Desvio padrao: %.2f (%s)", g_stats.stddev, classify_contrast(g_stats.stddev));
+  render_text(g_secondaryWindow.renderer, line, 24.0f, 256.0f, text_color);
+
+  render_button(g_secondaryWindow.renderer, &g_equalizeButton);
+  render_button(g_secondaryWindow.renderer, &g_resolutionButton);
+
+  render_text(g_secondaryWindow.renderer, "Tecla S: salvar imagem ativa", 24.0f, 354.0f, muted_color);
+
+  SDL_RenderPresent(g_secondaryWindow.renderer);
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+void render(void)
+{
+  render_main_window();
+  render_secondary_window();
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+bool Button_contains(Button *button, float x, float y)
+{
+  if (!button)
+    return false;
+
+  return x >= button->rect.x
+    && x <= button->rect.x + button->rect.w
+    && y >= button->rect.y
+    && y <= button->rect.y + button->rect.h;
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+bool Button_handle_event(Button *button, const SDL_Event *event)
+{
+  if (!button || !event)
+    return false;
+
+  switch (event->type)
+  {
+  case SDL_EVENT_MOUSE_MOTION:
+    button->hovered = Button_contains(button, event->motion.x, event->motion.y);
+    return false;
+
+  case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    if (event->button.button == SDL_BUTTON_LEFT && Button_contains(button, event->button.x, event->button.y))
+      button->pressed = true;
+    return false;
+
+  case SDL_EVENT_MOUSE_BUTTON_UP:
+    if (event->button.button == SDL_BUTTON_LEFT)
+    {
+      bool clicked = button->pressed && Button_contains(button, event->button.x, event->button.y);
+      button->pressed = false;
+      return clicked;
+    }
+    return false;
+
+  default:
+    return false;
+  }
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+void toggle_equalization(void)
+{
+  if (g_isEqualized)
+  {
+    if (!restore_original_grayscale())
+      SDL_Log("*** Erro ao restaurar imagem original.");
+  }
+  else
+  {
+    if (MyImage_equalize(&g_image, g_window.renderer))
+    {
+      g_isEqualized = true;
+      g_equalizeButton.text = "Ver original";
+      update_image_stats();
+    }
+  }
+}
+
+//------------------------------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+void toggle_resolution(void)
+{
+  g_showOriginalResolution = !g_showOriginalResolution;
+  update_main_window_size_and_position();
 }
 
 //------------------------------------------------------------------------------
@@ -603,6 +1090,9 @@ void render(void)
 void loop(void)
 {
   SDL_Log(">>> loop()");
+
+  SDL_WindowID main_window_id = SDL_GetWindowID(g_window.window);
+  SDL_WindowID secondary_window_id = SDL_GetWindowID(g_secondaryWindow.window);
 
   render();
 
@@ -618,43 +1108,52 @@ void loop(void)
         isRunning = false;
         break;
 
+      case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+        if (event.window.windowID == main_window_id || event.window.windowID == secondary_window_id)
+          isRunning = false;
+        break;
+
       case SDL_EVENT_KEY_DOWN:
-        if (!event.key.repeat)
+        if (!event.key.repeat && event.key.key == SDLK_S)
+          save_current_image();
+        break;
+
+      case SDL_EVENT_MOUSE_MOTION:
+        if (event.motion.windowID == secondary_window_id)
         {
-          switch (event.key.key)
-          {
-            case SDLK_R: // fallthrough.
-            case SDLK_0: reset_image(); break;
-            case SDLK_1: MyImage_blur(&g_image, g_window.renderer, 3); break;
-            case SDLK_2: MyImage_blur(&g_image, g_window.renderer, 5); break;
-            case SDLK_3: MyImage_blur(&g_image, g_window.renderer, 7); break;
-            case SDLK_4: MyImage_blur(&g_image, g_window.renderer, 11); break;
-            case SDLK_5: MyImage_blur(&g_image, g_window.renderer, 15); break;
-            case SDLK_6: MyImage_blur(&g_image, g_window.renderer, 29); break;
-            case SDLK_7: MyImage_blur(&g_image, g_window.renderer, 41); break;
-            case SDLK_8: MyImage_blur(&g_image, g_window.renderer, 73); break;
-            case SDLK_9: MyImage_blur(&g_image, g_window.renderer, 101); break;
-          }
+          Button_handle_event(&g_equalizeButton, &event);
+          Button_handle_event(&g_resolutionButton, &event);
+        }
+        break;
+
+      case SDL_EVENT_MOUSE_BUTTON_DOWN:
+      case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (event.button.windowID == secondary_window_id)
+        {
+          if (Button_handle_event(&g_equalizeButton, &event))
+            toggle_equalization();
+
+          if (Button_handle_event(&g_resolutionButton, &event))
+            toggle_resolution();
         }
         break;
       }
     }
 
-    // Breve pausa para diminuir o processamento contínuo do programa...
-    SDL_Delay(50);
+    render();
+    SDL_Delay(16);
   }
-  
+
   SDL_Log("<<< loop()");
 }
 
 //------------------------------------------------------------------------------
-// 
+//
 //------------------------------------------------------------------------------
 int main(int argc, char *argv[])
 {
-
- // Verifica se o usuário passou o caminho da imagem
-  if (argc != 2){
+  if (argc != 2)
+  {
     SDL_Log("Uso: %s caminho_da_imagem", argv[0]);
     return SDL_APP_FAILURE;
   }
@@ -667,57 +1166,29 @@ int main(int argc, char *argv[])
   if (!load_rgba32(argv[1], g_window.renderer, &g_image))
     return SDL_APP_FAILURE;
 
-  if (MyImage_is_grayscale(&g_image)){
-    SDL_Log("A imagem já está em escala de cinza.");
+  if (MyImage_is_grayscale(&g_image))
+  {
+    SDL_Log("A imagem ja esta em escala de cinza.");
   }
-  else{
-    SDL_Log("A imagem é colorida.");
-
+  else
+  {
+    SDL_Log("A imagem e colorida.");
     if (!MyImage_convert_to_grayscale(&g_image))
       return SDL_APP_FAILURE;
 
-    if (!MyImage_update_texture_with_surface(
-        &g_image,
-        g_window.renderer,
-        g_image.surface))
-    { 
-    return SDL_APP_FAILURE;
-    }
+    if (!MyImage_restore_texture(&g_image, g_window.renderer))
+      return SDL_APP_FAILURE;
 
-  SDL_Log("Imagem convertida para escala de cinza.");
-}
-
-  SDL_Log("Criando cursores do mouse...");
-  defaultMouseCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
-  hourglassMouseCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_WAIT);
-  SDL_SetCursor(defaultMouseCursor);
-
-  SDL_Log("Criando superfície extra (filter)...");
-  surfaceFilter = SDL_CreateSurface(g_image.surface->w, g_image.surface->h, g_image.surface->format);
-
-  // Altera tamanho da janela se a imagem for maior do que o tamanho padrão
-  // e reposiciona no canto superior esquerdo da tela.
-  int imageWidth = (int)g_image.rect.w;
-  int imageHeight = (int)g_image.rect.h;
-  if (imageWidth > DEFAULT_WINDOW_WIDTH || imageHeight > DEFAULT_WINDOW_HEIGHT)
-  {
-    // Obtém o tamanho da borda da janela. Neste exemplo, só queremos saber
-    // o lado superior e o lado esquerdo, para posicionar a janela corretamente
-    // (posicionar a janela na coordenada (0, 0) faria com que a borda do
-    // programa ficasse fora da região da tela).
-    int top = 0;
-    int left = 0;
-    SDL_GetWindowBordersSize(g_window.window, &top, &left, NULL, NULL);
-
-    SDL_Log("Redefinindo dimensões da janela, de (%d, %d) para (%d, %d), e alterando a posição para (%d, %d).",
-      DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT, imageWidth, imageHeight, left, top);
-
-    SDL_SetWindowSize(g_window.window, imageWidth, imageHeight);
-    SDL_SetWindowPosition(g_window.window, left, top);
-
-    SDL_SyncWindow(g_window.window);
+    SDL_Log("Imagem convertida para escala de cinza.");
   }
 
+  if (!copy_original_grayscale(&g_image))
+    return SDL_APP_FAILURE;
+
+  if (!update_image_stats())
+    return SDL_APP_FAILURE;
+
+  update_main_window_size_and_position();
   loop();
 
   return 0;
