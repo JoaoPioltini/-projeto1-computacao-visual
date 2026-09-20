@@ -488,55 +488,63 @@ bool MyImage_calculate_histogram(
     Uint32 histogram[HISTOGRAM_SIZE],
     Uint64 *total_pixels)
 {
-    if (!image || !image->surface || !histogram || !total_pixels)
+  if (!image || !image->surface || !histogram || !total_pixels)
+  {
+    SDL_Log("*** Erro: Parametros invalidos para calculo do histograma.");
+    return false;
+  }
+
+  memset(histogram, 0, sizeof(Uint32) * HISTOGRAM_SIZE);
+  *total_pixels = 0;
+
+  const SDL_PixelFormatDetails *format =
+      SDL_GetPixelFormatDetails(image->surface->format);
+
+  if (!format)
+  {
+    SDL_Log("*** Erro ao obter formato de pixels: %s", SDL_GetError());
+    return false;
+  }
+
+  if (!SDL_LockSurface(image->surface))
+  {
+    SDL_Log("*** Erro ao bloquear superficie: %s", SDL_GetError());
+    return false;
+  }
+
+  for (int row = 0; row < image->surface->h; ++row)
+  {
+    Uint32 *row_pixels =
+        (Uint32 *)((Uint8 *)image->surface->pixels +
+                   row * image->surface->pitch);
+
+    for (int col = 0; col < image->surface->w; ++col)
     {
-        SDL_Log("*** Erro: Parametros invalidos para calculo do histograma.");
-        return false;
+      Uint8 r = 0;
+      Uint8 g = 0;
+      Uint8 b = 0;
+
+      SDL_GetRGB(
+          row_pixels[col],
+          format,
+          NULL,
+          &r,
+          &g,
+          &b);
+
+      // A imagem ja esta em escala de cinza, portanto R = G = B.
+      // R representa diretamente a intensidade do pixel.
+      histogram[r]++;
     }
+  }
 
-    memset(histogram, 0, sizeof(Uint32) * HISTOGRAM_SIZE);
+  SDL_UnlockSurface(image->surface);
 
-    *total_pixels =
-        (Uint64)image->surface->w *
-        (Uint64)image->surface->h;
+  *total_pixels =
+      (Uint64)image->surface->w *
+      (Uint64)image->surface->h;
 
-    const SDL_PixelFormatDetails *format =
-        SDL_GetPixelFormatDetails(image->surface->format);
-
-    if (!SDL_LockSurface(image->surface))
-    {
-        SDL_Log("*** Erro ao bloquear superficie: %s", SDL_GetError());
-        return false;
-    }
-
-    for (int row = 0; row < image->surface->h; ++row)
-    {
-        Uint32 *row_pixels =
-            (Uint32 *)((Uint8 *)image->surface->pixels +
-                       row * image->surface->pitch);
-
-        for (int col = 0; col < image->surface->w; ++col)
-        {
-            Uint8 r = 0;
-            Uint8 g = 0;
-            Uint8 b = 0;
-
-            SDL_GetRGB(
-                row_pixels[col],
-                format,
-                NULL,
-                &r,
-                &g,
-                &b
-            );
-
-            histogram[r]++;
-        }
-    }
-
-    SDL_UnlockSurface(image->surface);
-
-    return true;
+  return true;
 }
 
 //------------------------------------------------------------------------------
@@ -544,23 +552,38 @@ bool MyImage_calculate_histogram(
 //------------------------------------------------------------------------------
 void calculate_histogram_analysis(ImageStats *stats)
 {
-  if (!stats || stats->total_pixels == 0)
+  if (!stats)
+    return;
+
+  stats->mean = 0.0;
+  stats->stddev = 0.0;
+
+  if (stats->total_pixels == 0)
     return;
 
   double sum = 0.0;
+
   for (int i = 0; i < HISTOGRAM_SIZE; ++i)
+  {
     sum += (double)i * (double)stats->histogram[i];
+  }
 
   stats->mean = sum / (double)stats->total_pixels;
 
   double variance_sum = 0.0;
+
   for (int i = 0; i < HISTOGRAM_SIZE; ++i)
   {
     double difference = (double)i - stats->mean;
-    variance_sum += (double)stats->histogram[i] * difference * difference;
+
+    variance_sum +=
+        (double)stats->histogram[i] *
+        difference *
+        difference;
   }
 
-  stats->stddev = sqrt(variance_sum / (double)stats->total_pixels);
+  stats->stddev =
+      sqrt(variance_sum / (double)stats->total_pixels);
 }
 
 //------------------------------------------------------------------------------
@@ -596,10 +619,18 @@ const char *classify_contrast(double stddev)
 //------------------------------------------------------------------------------
 bool update_image_stats(void)
 {
-  if (!MyImage_calculate_histogram(&g_image, g_stats.histogram, &g_stats.total_pixels))
+  memset(&g_stats, 0, sizeof(g_stats));
+
+  if (!MyImage_calculate_histogram(
+          &g_image,
+          g_stats.histogram,
+          &g_stats.total_pixels))
+  {
     return false;
+  }
 
   calculate_histogram_analysis(&g_stats);
+
   return true;
 }
 
