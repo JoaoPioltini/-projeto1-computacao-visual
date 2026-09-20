@@ -483,39 +483,60 @@ bool MyImage_copy_surface_to_active(MyImage *image, SDL_Renderer *renderer, SDL_
 //------------------------------------------------------------------------------
 //
 //------------------------------------------------------------------------------
-bool MyImage_calculate_histogram(MyImage *image, Uint32 histogram[HISTOGRAM_SIZE], Uint64 *total_pixels)
+bool MyImage_calculate_histogram(
+    MyImage *image,
+    Uint32 histogram[HISTOGRAM_SIZE],
+    Uint64 *total_pixels)
 {
-  if (!image || !image->surface || !histogram || !total_pixels)
-  {
-    SDL_Log("*** Erro: Parametros invalidos para calculo do histograma.");
-    return false;
-  }
-
-  memset(histogram, 0, sizeof(Uint32) * HISTOGRAM_SIZE);
-  *total_pixels = (Uint64)image->surface->w * (Uint64)image->surface->h;
-
-  const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
-  Uint32 *pixels = (Uint32 *)image->surface->pixels;
-
-  Uint8 r = 0;
-  Uint8 g = 0;
-  Uint8 b = 0;
-
-  SDL_LockSurface(image->surface);
-
-  for (int row = 0; row < image->surface->h; ++row)
-  {
-    for (int col = 0; col < image->surface->w; ++col)
+    if (!image || !image->surface || !histogram || !total_pixels)
     {
-      int index = row * image->surface->w + col;
-
-      SDL_GetRGB(pixels[index], format, NULL, &r, &g, &b);
-      histogram[r]++;
+        SDL_Log("*** Erro: Parametros invalidos para calculo do histograma.");
+        return false;
     }
-  }
 
-  SDL_UnlockSurface(image->surface);
-  return true;
+    memset(histogram, 0, sizeof(Uint32) * HISTOGRAM_SIZE);
+
+    *total_pixels =
+        (Uint64)image->surface->w *
+        (Uint64)image->surface->h;
+
+    const SDL_PixelFormatDetails *format =
+        SDL_GetPixelFormatDetails(image->surface->format);
+
+    if (!SDL_LockSurface(image->surface))
+    {
+        SDL_Log("*** Erro ao bloquear superficie: %s", SDL_GetError());
+        return false;
+    }
+
+    for (int row = 0; row < image->surface->h; ++row)
+    {
+        Uint32 *row_pixels =
+            (Uint32 *)((Uint8 *)image->surface->pixels +
+                       row * image->surface->pitch);
+
+        for (int col = 0; col < image->surface->w; ++col)
+        {
+            Uint8 r = 0;
+            Uint8 g = 0;
+            Uint8 b = 0;
+
+            SDL_GetRGB(
+                row_pixels[col],
+                format,
+                NULL,
+                &r,
+                &g,
+                &b
+            );
+
+            histogram[r]++;
+        }
+    }
+
+    SDL_UnlockSurface(image->surface);
+
+    return true;
 }
 
 //------------------------------------------------------------------------------
