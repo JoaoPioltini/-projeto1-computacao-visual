@@ -647,16 +647,24 @@ bool MyImage_equalize(MyImage *image, SDL_Renderer *renderer)
 
   Uint32 histogram[HISTOGRAM_SIZE] = { 0 };
   Uint64 total_pixels = 0;
-  if (!MyImage_calculate_histogram(image, histogram, &total_pixels) || total_pixels == 0)
+
+  if (!MyImage_calculate_histogram(image, histogram, &total_pixels) ||
+      total_pixels == 0)
+  {
     return false;
+  }
 
   Uint64 cdf[HISTOGRAM_SIZE] = { 0 };
   cdf[0] = histogram[0];
-  for (int i = 1; i < HISTOGRAM_SIZE; ++i)
-    cdf[i] = cdf[i - 1] + histogram[i];
 
-  // Primeiro valor acumulado nao-zero; evita mapear intensidades ausentes.
+  for (int i = 1; i < HISTOGRAM_SIZE; ++i)
+  {
+    cdf[i] = cdf[i - 1] + histogram[i];
+  }
+
+  // Primeiro valor acumulado nao-zero.
   Uint64 cdf_min = 0;
+
   for (int i = 0; i < HISTOGRAM_SIZE; ++i)
   {
     if (histogram[i] > 0)
@@ -673,59 +681,72 @@ bool MyImage_equalize(MyImage *image, SDL_Renderer *renderer)
   }
 
   Uint8 transform[HISTOGRAM_SIZE] = { 0 };
-  double denominator = (double)(total_pixels - cdf_min);
+
+  double denominator =
+      (double)(total_pixels - cdf_min);
+
   for (int i = 0; i < HISTOGRAM_SIZE; ++i)
   {
-    double value = ((double)(cdf[i] - cdf_min) / denominator) * 255.0;
+    double value =
+        (((double)cdf[i] - (double)cdf_min) / denominator) * 255.0;
+
     if (value < 0.0)
       value = 0.0;
+
     if (value > 255.0)
       value = 255.0;
+
     transform[i] = (Uint8)(value + 0.5);
   }
 
-  const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
-  Uint32 *pixels = (Uint32 *)image->surface->pixels;
+  const SDL_PixelFormatDetails *format =
+      SDL_GetPixelFormatDetails(image->surface->format);
 
-  Uint8 r = 0;
-  Uint8 g = 0;
-  Uint8 b = 0;
+  if (!format)
+  {
+    SDL_Log("*** Erro ao obter formato de pixels: %s", SDL_GetError());
+    return false;
+  }
 
-  SDL_LockSurface(image->surface);
+  if (!SDL_LockSurface(image->surface))
+  {
+    SDL_Log("*** Erro ao bloquear superficie: %s", SDL_GetError());
+    return false;
+  }
 
   for (int row = 0; row < image->surface->h; ++row)
   {
+    Uint32 *row_pixels =
+        (Uint32 *)((Uint8 *)image->surface->pixels +
+                   row * image->surface->pitch);
+
     for (int col = 0; col < image->surface->w; ++col)
     {
-      int index = row * image->surface->w + col;
+      Uint8 r = 0;
+      Uint8 g = 0;
+      Uint8 b = 0;
 
-      SDL_GetRGB(pixels[index], format, NULL, &r, &g, &b);
+      SDL_GetRGB(
+          row_pixels[col],
+          format,
+          NULL,
+          &r,
+          &g,
+          &b);
+
       Uint8 y = transform[r];
-      pixels[index] = SDL_MapRGB(format, NULL, y, y, y);
+
+      row_pixels[col] =
+          SDL_MapRGB(format, NULL, y, y, y);
     }
   }
 
   SDL_UnlockSurface(image->surface);
-  return MyImage_update_texture_with_surface(image, renderer, image->surface);
-}
 
-//------------------------------------------------------------------------------
-//
-//------------------------------------------------------------------------------
-bool restore_original_grayscale(void)
-{
-  if (!g_originalGraySurface)
-  {
-    SDL_Log("*** Erro: copia original em cinza nao existe.");
-    return false;
-  }
-
-  if (!MyImage_copy_surface_to_active(&g_image, g_window.renderer, g_originalGraySurface))
-    return false;
-
-  g_isEqualized = false;
-  g_equalizeButton.text = "Equalizar";
-  return update_image_stats();
+  return MyImage_update_texture_with_surface(
+      image,
+      renderer,
+      image->surface);
 }
 
 //------------------------------------------------------------------------------
