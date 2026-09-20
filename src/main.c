@@ -481,7 +481,19 @@ bool MyImage_copy_surface_to_active(MyImage *image, SDL_Renderer *renderer, SDL_
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Calcula o histograma de intensidades da imagem.
+ *
+ * O histograma possui 256 posicoes, correspondentes aos niveis
+ * de intensidade de 0 a 255. Como a imagem ja esta em escala
+ * de cinza, o canal R representa diretamente a intensidade.
+ *
+ * @param image Imagem que sera analisada.
+ * @param histogram Vetor que armazenara as frequencias.
+ * @param total_pixels Quantidade total de pixels processados.
+ *
+ * @return true em caso de sucesso; false em caso de erro.
+ */
 //------------------------------------------------------------------------------
 bool MyImage_calculate_histogram(
     MyImage *image,
@@ -548,7 +560,19 @@ bool MyImage_calculate_histogram(
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Calcula a media e o desvio-padrao das intensidades da imagem
+ * utilizando o histograma.
+ *
+ * A media representa a intensidade media dos pixels e pode ser
+ * utilizada como indicador de luminosidade.
+ *
+ * O desvio-padrao representa a dispersao das intensidades em
+ * relacao a media e e utilizado como indicador de contraste.
+ *
+ * @param stats Estrutura contendo o histograma, quantidade de pixels
+ *              e os resultados da analise.
+ */
 //------------------------------------------------------------------------------
 void calculate_histogram_analysis(ImageStats *stats)
 {
@@ -587,7 +611,17 @@ void calculate_histogram_analysis(ImageStats *stats)
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Classifica a luminosidade da imagem utilizando sua intensidade media.
+ *
+ * Media menor que 85: imagem escura.
+ * Media entre 85 e 170: luminosidade media.
+ * Media maior que 170: imagem clara.
+ *
+ * @param mean Intensidade media da imagem.
+ *
+ * @return Texto correspondente a classificacao da luminosidade.
+ */
 //------------------------------------------------------------------------------
 const char *classify_brightness(double mean)
 {
@@ -601,7 +635,20 @@ const char *classify_brightness(double mean)
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Classifica o contraste da imagem utilizando o desvio-padrao
+ * das intensidades.
+ *
+ * Os limiares utilizados sao heuristicas definidas pelo grupo.
+ *
+ * Desvio menor que 40: baixo contraste.
+ * Desvio entre 40 e 80: contraste medio.
+ * Desvio maior que 80: alto contraste.
+ *
+ * @param stddev Desvio-padrao das intensidades da imagem.
+ *
+ * @return Texto correspondente a classificacao do contraste.
+ */
 //------------------------------------------------------------------------------
 const char *classify_contrast(double stddev)
 {
@@ -615,7 +662,15 @@ const char *classify_contrast(double stddev)
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Atualiza as estatisticas da imagem atualmente carregada.
+ *
+ * A funcao recalcula o histograma, a quantidade total de pixels,
+ * a intensidade media e o desvio-padrao.
+ *
+ * @return true se as estatisticas forem calculadas com sucesso;
+ *         false caso ocorra algum erro.
+ */
 //------------------------------------------------------------------------------
 bool update_image_stats(void)
 {
@@ -993,7 +1048,20 @@ void render_button(SDL_Renderer *renderer, Button *button)
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Renderiza graficamente o histograma da imagem.
+ *
+ * Cada barra representa uma intensidade entre 0 e 255.
+ * A maior frequencia encontrada e utilizada para normalizar
+ * apenas a altura visual das barras.
+ *
+ * Essa normalizacao nao modifica os valores originais
+ * armazenados no histograma.
+ *
+ * @param renderer Renderer utilizado para desenhar o histograma.
+ * @param rect Area da janela destinada ao histograma.
+ * @param histogram Frequencias das 256 intensidades da imagem.
+ */
 //------------------------------------------------------------------------------
 void render_histogram(SDL_Renderer *renderer, const SDL_FRect *rect, const Uint32 histogram[HISTOGRAM_SIZE])
 {
