@@ -481,9 +481,24 @@ bool MyImage_copy_surface_to_active(MyImage *image, SDL_Renderer *renderer, SDL_
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Calcula o histograma de intensidades da imagem.
+ *
+ * O histograma possui 256 posicoes, correspondentes aos niveis
+ * de intensidade de 0 a 255. Como a imagem ja esta em escala
+ * de cinza, o canal R representa diretamente a intensidade.
+ *
+ * @param image Imagem que sera analisada.
+ * @param histogram Vetor que armazenara as frequencias.
+ * @param total_pixels Quantidade total de pixels processados.
+ *
+ * @return true em caso de sucesso; false em caso de erro.
+ */
 //------------------------------------------------------------------------------
-bool MyImage_calculate_histogram(MyImage *image, Uint32 histogram[HISTOGRAM_SIZE], Uint64 *total_pixels)
+bool MyImage_calculate_histogram(
+    MyImage *image,
+    Uint32 histogram[HISTOGRAM_SIZE],
+    Uint64 *total_pixels)
 {
   if (!image || !image->surface || !histogram || !total_pixels)
   {
@@ -492,58 +507,121 @@ bool MyImage_calculate_histogram(MyImage *image, Uint32 histogram[HISTOGRAM_SIZE
   }
 
   memset(histogram, 0, sizeof(Uint32) * HISTOGRAM_SIZE);
-  *total_pixels = (Uint64)image->surface->w * (Uint64)image->surface->h;
+  *total_pixels = 0;
 
-  const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
-  Uint32 *pixels = (Uint32 *)image->surface->pixels;
+  const SDL_PixelFormatDetails *format =
+      SDL_GetPixelFormatDetails(image->surface->format);
 
-  Uint8 r = 0;
-  Uint8 g = 0;
-  Uint8 b = 0;
+  if (!format)
+  {
+    SDL_Log("*** Erro ao obter formato de pixels: %s", SDL_GetError());
+    return false;
+  }
 
-  SDL_LockSurface(image->surface);
+  if (!SDL_LockSurface(image->surface))
+  {
+    SDL_Log("*** Erro ao bloquear superficie: %s", SDL_GetError());
+    return false;
+  }
 
   for (int row = 0; row < image->surface->h; ++row)
   {
+    Uint32 *row_pixels =
+        (Uint32 *)((Uint8 *)image->surface->pixels +
+                   row * image->surface->pitch);
+
     for (int col = 0; col < image->surface->w; ++col)
     {
-      int index = row * image->surface->w + col;
+      Uint8 r = 0;
+      Uint8 g = 0;
+      Uint8 b = 0;
 
-      SDL_GetRGB(pixels[index], format, NULL, &r, &g, &b);
+      SDL_GetRGB(
+          row_pixels[col],
+          format,
+          NULL,
+          &r,
+          &g,
+          &b);
+
+      // A imagem ja esta em escala de cinza, portanto R = G = B.
+      // R representa diretamente a intensidade do pixel.
       histogram[r]++;
     }
   }
 
   SDL_UnlockSurface(image->surface);
+
+  *total_pixels =
+      (Uint64)image->surface->w *
+      (Uint64)image->surface->h;
+
   return true;
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Calcula a media e o desvio-padrao das intensidades da imagem
+ * utilizando o histograma.
+ *
+ * A media representa a intensidade media dos pixels e pode ser
+ * utilizada como indicador de luminosidade.
+ *
+ * O desvio-padrao representa a dispersao das intensidades em
+ * relacao a media e e utilizado como indicador de contraste.
+ *
+ * @param stats Estrutura contendo o histograma, quantidade de pixels
+ *              e os resultados da analise.
+ */
 //------------------------------------------------------------------------------
 void calculate_histogram_analysis(ImageStats *stats)
 {
-  if (!stats || stats->total_pixels == 0)
+  if (!stats)
+    return;
+
+  stats->mean = 0.0;
+  stats->stddev = 0.0;
+
+  if (stats->total_pixels == 0)
     return;
 
   double sum = 0.0;
+
   for (int i = 0; i < HISTOGRAM_SIZE; ++i)
+  {
     sum += (double)i * (double)stats->histogram[i];
+  }
 
   stats->mean = sum / (double)stats->total_pixels;
 
   double variance_sum = 0.0;
+
   for (int i = 0; i < HISTOGRAM_SIZE; ++i)
   {
     double difference = (double)i - stats->mean;
-    variance_sum += (double)stats->histogram[i] * difference * difference;
+
+    variance_sum +=
+        (double)stats->histogram[i] *
+        difference *
+        difference;
   }
 
-  stats->stddev = sqrt(variance_sum / (double)stats->total_pixels);
+  stats->stddev =
+      sqrt(variance_sum / (double)stats->total_pixels);
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Classifica a luminosidade da imagem utilizando sua intensidade media.
+ *
+ * Media menor que 85: imagem escura.
+ * Media entre 85 e 170: luminosidade media.
+ * Media maior que 170: imagem clara.
+ *
+ * @param mean Intensidade media da imagem.
+ *
+ * @return Texto correspondente a classificacao da luminosidade.
+ */
 //------------------------------------------------------------------------------
 const char *classify_brightness(double mean)
 {
@@ -557,7 +635,20 @@ const char *classify_brightness(double mean)
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Classifica o contraste da imagem utilizando o desvio-padrao
+ * das intensidades.
+ *
+ * Os limiares utilizados sao heuristicas definidas pelo grupo.
+ *
+ * Desvio menor que 40: baixo contraste.
+ * Desvio entre 40 e 80: contraste medio.
+ * Desvio maior que 80: alto contraste.
+ *
+ * @param stddev Desvio-padrao das intensidades da imagem.
+ *
+ * @return Texto correspondente a classificacao do contraste.
+ */
 //------------------------------------------------------------------------------
 const char *classify_contrast(double stddev)
 {
@@ -571,14 +662,30 @@ const char *classify_contrast(double stddev)
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Atualiza as estatisticas da imagem atualmente carregada.
+ *
+ * A funcao recalcula o histograma, a quantidade total de pixels,
+ * a intensidade media e o desvio-padrao.
+ *
+ * @return true se as estatisticas forem calculadas com sucesso;
+ *         false caso ocorra algum erro.
+ */
 //------------------------------------------------------------------------------
 bool update_image_stats(void)
 {
-  if (!MyImage_calculate_histogram(&g_image, g_stats.histogram, &g_stats.total_pixels))
+  memset(&g_stats, 0, sizeof(g_stats));
+
+  if (!MyImage_calculate_histogram(
+          &g_image,
+          g_stats.histogram,
+          &g_stats.total_pixels))
+  {
     return false;
+  }
 
   calculate_histogram_analysis(&g_stats);
+
   return true;
 }
 
@@ -595,16 +702,24 @@ bool MyImage_equalize(MyImage *image, SDL_Renderer *renderer)
 
   Uint32 histogram[HISTOGRAM_SIZE] = { 0 };
   Uint64 total_pixels = 0;
-  if (!MyImage_calculate_histogram(image, histogram, &total_pixels) || total_pixels == 0)
+
+  if (!MyImage_calculate_histogram(image, histogram, &total_pixels) ||
+      total_pixels == 0)
+  {
     return false;
+  }
 
   Uint64 cdf[HISTOGRAM_SIZE] = { 0 };
   cdf[0] = histogram[0];
-  for (int i = 1; i < HISTOGRAM_SIZE; ++i)
-    cdf[i] = cdf[i - 1] + histogram[i];
 
-  // Primeiro valor acumulado nao-zero; evita mapear intensidades ausentes.
+  for (int i = 1; i < HISTOGRAM_SIZE; ++i)
+  {
+    cdf[i] = cdf[i - 1] + histogram[i];
+  }
+
+  // Primeiro valor acumulado nao-zero.
   Uint64 cdf_min = 0;
+
   for (int i = 0; i < HISTOGRAM_SIZE; ++i)
   {
     if (histogram[i] > 0)
@@ -621,59 +736,72 @@ bool MyImage_equalize(MyImage *image, SDL_Renderer *renderer)
   }
 
   Uint8 transform[HISTOGRAM_SIZE] = { 0 };
-  double denominator = (double)(total_pixels - cdf_min);
+
+  double denominator =
+      (double)(total_pixels - cdf_min);
+
   for (int i = 0; i < HISTOGRAM_SIZE; ++i)
   {
-    double value = ((double)(cdf[i] - cdf_min) / denominator) * 255.0;
+    double value =
+        (((double)cdf[i] - (double)cdf_min) / denominator) * 255.0;
+
     if (value < 0.0)
       value = 0.0;
+
     if (value > 255.0)
       value = 255.0;
+
     transform[i] = (Uint8)(value + 0.5);
   }
 
-  const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
-  Uint32 *pixels = (Uint32 *)image->surface->pixels;
+  const SDL_PixelFormatDetails *format =
+      SDL_GetPixelFormatDetails(image->surface->format);
 
-  Uint8 r = 0;
-  Uint8 g = 0;
-  Uint8 b = 0;
+  if (!format)
+  {
+    SDL_Log("*** Erro ao obter formato de pixels: %s", SDL_GetError());
+    return false;
+  }
 
-  SDL_LockSurface(image->surface);
+  if (!SDL_LockSurface(image->surface))
+  {
+    SDL_Log("*** Erro ao bloquear superficie: %s", SDL_GetError());
+    return false;
+  }
 
   for (int row = 0; row < image->surface->h; ++row)
   {
+    Uint32 *row_pixels =
+        (Uint32 *)((Uint8 *)image->surface->pixels +
+                   row * image->surface->pitch);
+
     for (int col = 0; col < image->surface->w; ++col)
     {
-      int index = row * image->surface->w + col;
+      Uint8 r = 0;
+      Uint8 g = 0;
+      Uint8 b = 0;
 
-      SDL_GetRGB(pixels[index], format, NULL, &r, &g, &b);
+      SDL_GetRGB(
+          row_pixels[col],
+          format,
+          NULL,
+          &r,
+          &g,
+          &b);
+
       Uint8 y = transform[r];
-      pixels[index] = SDL_MapRGB(format, NULL, y, y, y);
+
+      row_pixels[col] =
+          SDL_MapRGB(format, NULL, y, y, y);
     }
   }
 
   SDL_UnlockSurface(image->surface);
-  return MyImage_update_texture_with_surface(image, renderer, image->surface);
-}
 
-//------------------------------------------------------------------------------
-//
-//------------------------------------------------------------------------------
-bool restore_original_grayscale(void)
-{
-  if (!g_originalGraySurface)
-  {
-    SDL_Log("*** Erro: copia original em cinza nao existe.");
-    return false;
-  }
-
-  if (!MyImage_copy_surface_to_active(&g_image, g_window.renderer, g_originalGraySurface))
-    return false;
-
-  g_isEqualized = false;
-  g_equalizeButton.text = "Equalizar";
-  return update_image_stats();
+  return MyImage_update_texture_with_surface(
+      image,
+      renderer,
+      image->surface);
 }
 
 //------------------------------------------------------------------------------
@@ -920,7 +1048,20 @@ void render_button(SDL_Renderer *renderer, Button *button)
 }
 
 //------------------------------------------------------------------------------
-//
+/**
+ * Renderiza graficamente o histograma da imagem.
+ *
+ * Cada barra representa uma intensidade entre 0 e 255.
+ * A maior frequencia encontrada e utilizada para normalizar
+ * apenas a altura visual das barras.
+ *
+ * Essa normalizacao nao modifica os valores originais
+ * armazenados no histograma.
+ *
+ * @param renderer Renderer utilizado para desenhar o histograma.
+ * @param rect Area da janela destinada ao histograma.
+ * @param histogram Frequencias das 256 intensidades da imagem.
+ */
 //------------------------------------------------------------------------------
 void render_histogram(SDL_Renderer *renderer, const SDL_FRect *rect, const Uint32 histogram[HISTOGRAM_SIZE])
 {
