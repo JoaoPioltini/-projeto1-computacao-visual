@@ -57,7 +57,69 @@ O projeto foi escrito em linguagem C e o `makefile` usa `gcc` como compilador pa
 No macOS e no WSL, o projeto usa `pkg-config` para obter os caminhos de include e linkagem.
 No Windows com MinGW, o `makefile` usa a variável `SDL_DIR` para encontrar as bibliotecas da SDL.
 
-## Dependências
+## Compilação e execução
+
+`make` compila o projeto, mas não instala as dependências. Execute na raiz do
+repositório. O código usa C17.
+
+### Windows (GCC/MinGW de 64 bits)
+
+Instale GCC, GNU Make e os pacotes de desenvolvimento **MinGW x86_64** de SDL3,
+SDL3_image e SDL3_ttf. Pacotes para Visual C++ não servem para esse build.
+
+O makefile procura as bibliotecas nesta ordem:
+
+1. Pasta informada por `SDL_DIR`, contendo as três bibliotecas.
+2. Pacotes locais em `.local/SDL3-*/x86_64-w64-mingw32`,
+   `.local/SDL3_image-*/x86_64-w64-mingw32` e
+   `.local/SDL3_ttf-*/x86_64-w64-mingw32`.
+3. Pasta da disciplina: `d:/dev/compvis/libs/SDL3`.
+4. Bibliotecas registradas no `pkg-config`, como em um ambiente MSYS2 configurado.
+
+Para montar uma pasta única, reúna o conteúdo de `include`, `lib` e `bin` dos
+três pacotes MinGW de 64 bits, preservando as subpastas dos cabeçalhos:
+
+```text
+SDL3/
+  include/SDL3/SDL.h
+  include/SDL3_image/SDL_image.h
+  include/SDL3_ttf/SDL_ttf.h
+  lib/                         # bibliotecas de importação dos três pacotes
+  bin/                         # DLLs dos três pacotes e suas dependências
+```
+
+Com GCC e Make no PATH e as bibliotecas na pasta da disciplina:
+
+```powershell
+mingw32-make
+.\programa.exe assets/images/kodim23.png
+```
+
+Se GNU Make estiver instalado como `make`, use `make` no lugar de `mingw32-make`.
+Para outra pasta de bibliotecas, prefira um caminho sem espaços:
+
+```powershell
+mingw32-make SDL_DIR=C:/libs/SDL3
+```
+
+As DLLs dos SDKs detectados são copiadas para a raiz do projeto. Quando o build
+usa `pkg-config`, as DLLs devem estar no PATH do ambiente.
+
+Na configuração portátil preparada neste computador:
+
+```powershell
+.\.local\w64devkit\bin\mingw32-make.exe
+.\programa.exe assets/images/kodim23.png
+```
+
+O GCC em `.local/w64devkit/bin` é detectado automaticamente. A pasta `.local`
+não é versionada e não acompanha um clone do repositório.
+
+### Linux/WSL e macOS
+
+Instale GCC (ou Clang), GNU Make, `pkg-config` e os pacotes de desenvolvimento
+SDL3, SDL3_image e SDL3_ttf. As bibliotecas devem disponibilizar os módulos
+`sdl3`, `sdl3-image` e `sdl3-ttf` para o `pkg-config`.
 
 No macOS com Homebrew:
 
@@ -65,83 +127,35 @@ No macOS com Homebrew:
 brew install pkg-config sdl3 sdl3_image sdl3_ttf
 ```
 
-No Linux/WSL, instale pacotes equivalentes de desenvolvimento para SDL3, SDL3_image, SDL3_ttf, `pkg-config` e `gcc`.
-
-No Windows com MinGW, deixe as bibliotecas da SDL no caminho esperado pelo `makefile`:
-
-```text
-d:/dev/compvis/libs/SDL3
-```
-
-Se estiverem em outro local, informe o caminho ao compilar:
-
-```sh
-mingw32-make SDL_DIR=c:/caminho/para/SDL3
-```
-
-## Compilação
-
-Verificar dependências:
+No Linux/WSL, os nomes dos pacotes dependem da distribuição. O WSL precisa de
+suporte a janelas gráficas, como WSLg, para executar a interface.
 
 ```sh
 make check-deps
-```
-
-Compilar:
-
-```sh
 make
-```
-
-Caso precise informar explicitamente a versão do GCC:
-
-```sh
-make CC=gcc-15
-```
-
-No Windows com MinGW:
-
-```sh
-mingw32-make
-```
-
-Ou, informando explicitamente o compilador:
-
-```sh
-mingw32-make CC=gcc
-```
-
-Limpar arquivos gerados:
-
-```sh
-make clean
-```
-
-## Execução
-
-Rodar com a imagem de exemplo:
-
-```sh
 ./programa assets/images/kodim23.png
 ```
 
-No Windows:
+Para selecionar o compilador: `make CC=gcc-15` ou `make CC=clang`.
 
-```sh
-programa.exe assets/images/kodim23.png
-```
-
-Ou:
+### Comandos adicionais
 
 ```sh
 make run
+make run IMAGE=caminho/da/imagem.png
+make clean
 ```
 
-Rodar com outra imagem:
+`make clean` remove apenas o executável, preservando imagens salvas e dependências.
+Mantenha `assets` ao lado do executável: a fonte é localizada a partir dessa pasta,
+independentemente da pasta atual do terminal. A imagem de entrada e a saída
+`output_image.png` usam caminhos relativos à pasta atual do terminal.
 
-```sh
-./programa caminho/da/imagem.png
-```
+### Validação local no Windows
+
+Build validado com GCC 16.2.0 e SDL3 3.4.16, SDL3_image 3.4.6 e SDL3_ttf 3.2.2.
+As versões GCC 15.1.0/15.2.0 previstas para correção e a execução no WSL ainda
+não foram testadas neste computador.
 
 ## Controles
 

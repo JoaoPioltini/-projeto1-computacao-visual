@@ -36,7 +36,7 @@ enum constants
   DEFAULT_WINDOW_WIDTH = 1024,
   DEFAULT_WINDOW_HEIGHT = 768,
   SECONDARY_WINDOW_WIDTH = 500,
-  SECONDARY_WINDOW_HEIGHT = 400,
+  SECONDARY_WINDOW_HEIGHT = 450,
   HISTOGRAM_SIZE = 256,
   FONT_SIZE = 16,
 };
@@ -100,14 +100,14 @@ static TTF_Font *g_font = NULL;
 static ImageStats g_stats = { 0 };
 
 static Button g_equalizeButton = {
-  .rect = { .x = 40.0f, .y = 292.0f, .w = 190.0f, .h = 42.0f },
+  .rect = { .x = 150.0f, .y = 292.0f, .w = 200.0f, .h = 42.0f },
   .text = "Equalizar",
   .hovered = false,
   .pressed = false
 };
 
 static Button g_resolutionButton = {
-  .rect = { .x = 260.0f, .y = 292.0f, .w = 200.0f, .h = 42.0f },
+  .rect = { .x = 150.0f, .y = 350.0f, .w = 200.0f, .h = 42.0f },
   .text = "Resolucao original",
   .hovered = false,
   .pressed = false
@@ -274,7 +274,8 @@ bool MyImage_update_texture_with_surface(MyImage* image, SDL_Renderer *renderer,
   }
 
   SDL_Log("\tObtendo dimensões da textura...");
-  SDL_GetTextureSize(image->texture, &image->rect.w, &image->rect.h);
+  if (image->rect.w == 0.0f || image->rect.h == 0.0f)
+    SDL_GetTextureSize(image->texture, &image->rect.w, &image->rect.h);
 
   SDL_Log("<<< MyImage_update_texture_with_surface()");
   return true;
@@ -370,19 +371,21 @@ bool MyImage_is_grayscale(MyImage *image)
   }
 
   const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
-  Uint32 *pixels = (Uint32 *)image->surface->pixels;
+
 
   Uint8 r = 0;
   Uint8 g = 0;
   Uint8 b = 0;
 
-  SDL_LockSurface(image->surface);
+  if (!format || !SDL_LockSurface(image->surface))
+    return false;
 
   for (int row = 0; row < image->surface->h; ++row)
   {
     for (int col = 0; col < image->surface->w; ++col)
     {
-      int index = row * image->surface->w + col;
+      Uint32 *pixels = (Uint32 *)((Uint8 *)image->surface->pixels + row * image->surface->pitch);
+      int index = col;
 
       SDL_GetRGB(pixels[index], format, NULL, &r, &g, &b);
       if (r != g || g != b)
@@ -409,19 +412,21 @@ bool MyImage_convert_to_grayscale(MyImage *image)
   }
 
   const SDL_PixelFormatDetails *format = SDL_GetPixelFormatDetails(image->surface->format);
-  Uint32 *pixels = (Uint32 *)image->surface->pixels;
+
 
   Uint8 r = 0;
   Uint8 g = 0;
   Uint8 b = 0;
 
-  SDL_LockSurface(image->surface);
+  if (!format || !SDL_LockSurface(image->surface))
+    return false;
 
   for (int row = 0; row < image->surface->h; ++row)
   {
     for (int col = 0; col < image->surface->w; ++col)
     {
-      int index = row * image->surface->w + col;
+      Uint32 *pixels = (Uint32 *)((Uint8 *)image->surface->pixels + row * image->surface->pitch);
+      int index = col;
 
       SDL_GetRGB(pixels[index], format, NULL, &r, &g, &b);
 
@@ -854,7 +859,17 @@ SDL_AppResult initialize(void)
   }
 
   SDL_Log("\tCarregando fonte...");
-  g_font = TTF_OpenFont(FONT_FILENAME, FONT_SIZE);
+  const char *base_path = SDL_GetBasePath();
+  char *font_path = base_path ? SDL_malloc(strlen(base_path) + strlen(FONT_FILENAME) + 1) : NULL;
+  if (!font_path)
+  {
+    SDL_Log("*** Erro ao localizar a fonte junto ao executavel: %s", SDL_GetError());
+    return SDL_APP_FAILURE;
+  }
+  strcpy(font_path, base_path);
+  strcat(font_path, FONT_FILENAME);
+  g_font = TTF_OpenFont(font_path, FONT_SIZE);
+  SDL_free(font_path);
   if (!g_font)
   {
     SDL_Log("\t*** Erro ao carregar fonte \"%s\": %s", FONT_FILENAME, SDL_GetError());
@@ -946,15 +961,15 @@ void update_main_window_size_and_position(void)
 
   SDL_Rect display_bounds = { 0, 0, 0, 0 };
   SDL_DisplayID display = SDL_GetPrimaryDisplay();
-  if (display && SDL_GetDisplayUsableBounds(display, &display_bounds))
+  if (display && SDL_GetDisplayBounds(display, &display_bounds))
   {
     if (target_width <= display_bounds.w && target_height <= display_bounds.h)
     {
-      SDL_SetWindowPosition(g_window.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+      SDL_SetWindowPosition(g_window.window, SDL_WINDOWPOS_CENTERED_DISPLAY(display), SDL_WINDOWPOS_CENTERED_DISPLAY(display));
     }
     else
     {
-      SDL_SetWindowPosition(g_window.window, display_bounds.x, display_bounds.y);
+      SDL_SetWindowPosition(g_window.window, 0, 0);
     }
   }
   else
@@ -1151,7 +1166,7 @@ void render_secondary_window(void)
   render_button(g_secondaryWindow.renderer, &g_equalizeButton);
   render_button(g_secondaryWindow.renderer, &g_resolutionButton);
 
-  render_text(g_secondaryWindow.renderer, "Tecla S: salvar imagem ativa", 24.0f, 354.0f, muted_color);
+  render_text(g_secondaryWindow.renderer, "Tecla S: salvar imagem ativa", 24.0f, 410.0f, muted_color);
 
   SDL_RenderPresent(g_secondaryWindow.renderer);
 }
@@ -1215,6 +1230,16 @@ bool Button_handle_event(Button *button, const SDL_Event *event)
 //------------------------------------------------------------------------------
 //
 //------------------------------------------------------------------------------
+bool restore_original_grayscale(void)
+{
+  if (!MyImage_copy_surface_to_active(&g_image, g_window.renderer, g_originalGraySurface))
+    return false;
+
+  g_isEqualized = false;
+  g_equalizeButton.text = "Equalizar";
+  return update_image_stats();
+}
+
 void toggle_equalization(void)
 {
   if (g_isEqualized)

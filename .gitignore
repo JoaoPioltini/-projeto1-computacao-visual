@@ -50,3 +50,6 @@ output_image.png
 
 # macOS
 .DS_Store
+
+# Local build tools
+.local/
